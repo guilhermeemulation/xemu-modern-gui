@@ -40,7 +40,7 @@ jobs:
           opts=(
             --debug
           )
-        else
+        elif [[ "${{ matrix.arch }}" == "x86_64" ]]; then
           opts=(
             --extra-ldflags="-Wl,--thinlto-cache-policy=cache_size_bytes=$LTO_CACHE_MAXSIZE"
             -Db_lto=true
@@ -50,6 +50,9 @@ jobs:
             -Dx86_version=2
           )
           mkdir -p ${LTO_CACHE_DIR}
+        else
+          # x86-specific tuning must not be passed to AArch64 builds.
+          opts=()
         fi
         echo "XEMU_BUILD_OPTIONS=${opts[*]}" >> "$GITHUB_ENV"
     - name: Initialize compiler cache

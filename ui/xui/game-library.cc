@@ -1604,7 +1604,7 @@ std::string OverlayPathFor(const LibraryEntry &e,
         fs::path fp = fs::u8path(spec.path);
         sig += "|" + spec.path + "|" + std::to_string(fs::file_size(fp, ec)) +
                "|" +
-               std::to_string(fs::last_write_time(fp, ec).time_since_epoch().count());
+               std::to_string(static_cast<long long>(fs::last_write_time(fp, ec).time_since_epoch().count()));
         for (int t : spec.toggled) {
             sig += "," + std::to_string(t);
         }

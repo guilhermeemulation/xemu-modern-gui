@@ -14,7 +14,9 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        arch: [x86_64, arm64]
+        # This fork currently ships Windows x86_64 only. The ARM64
+        # profiler code does not compile with the current Windows CONTEXT headers.
+        arch: [x86_64]
         configuration: [debug, release]
     container:
       image: ghcr.io/xemu-project/xemu-win64-toolchain${{ matrix.arch == 'x86_64' && '-gcc:sha-2881edd' || ':sha-0d06ce8' }}
@@ -96,7 +98,9 @@ jobs:
     needs: build
     strategy:
       matrix:
-        arch: [x86_64, arm64]
+        # This fork currently ships Windows x86_64 only. The ARM64
+        # profiler code does not compile with the current Windows CONTEXT headers.
+        arch: [x86_64]
         configuration: [debug, release]
     steps:
     - name: Download artifacts

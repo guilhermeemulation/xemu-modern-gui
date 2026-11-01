@@ -492,7 +492,7 @@ static void vk_seen_add(uint64_t h)
 #define VK_SPEC_ADOPTED 2
 static struct { uint64_t hash; int phase; bool seed; } vk_spec_track[1024];
 static unsigned vk_seed_total, vk_seed_done;
-static bool vk_seed_collecting;
+static int vk_seed_collecting;
 static ShaderState vk_spec_pending[512];
 static unsigned vk_spec_r, vk_spec_w;
 static QemuThread vk_spec_thread;
@@ -579,7 +579,7 @@ static void *vk_spec_worker_fn(void *opaque)
                 vk_seed_done++;
                 xemu_shader_precompile_update(XEMU_SHADER_BACKEND_VULKAN,
                                               vk_seed_done, vk_seed_total,
-                                              !vk_seed_collecting && vk_seed_done >= vk_seed_total,
+                                              !qatomic_read(&vk_seed_collecting) && vk_seed_done >= vk_seed_total,
                                               true);
             }
         }
@@ -653,7 +653,7 @@ static bool vk_spec_queue(uint64_t h, const ShaderState *st, bool seed)
             }
             xemu_shader_precompile_update(XEMU_SHADER_BACKEND_VULKAN,
                                           vk_seed_done, vk_seed_total,
-                                          !vk_seed_collecting &&
+                                          !qatomic_read(&vk_seed_collecting) &&
                                               vk_seed_done >= vk_seed_total,
                                           true);
         }
@@ -711,12 +711,10 @@ const ShaderState *pgraph_vk_seed_pump_states(unsigned *count)
  * .spv, so the first scene already finds them, as with the GL seed. */
 static void vk_seed_siblings(void)
 {
-    vk_seed_total = 0;
-    vk_seed_done = 0;
-    vk_seed_collecting = true;
+    qatomic_set(&vk_seed_collecting, 1);
     if (!g_config.perf.shader_seeding) {
         xemu_shader_precompile_update(XEMU_SHADER_BACKEND_VULKAN, 0, 0,
-                                      true, false);
+                                      true, true);
         return;
     }
     const char *tag = pgraph_seed_game_tag();
@@ -780,13 +778,13 @@ static void vk_seed_siblings(void)
     g_free(states);
     g_free(local);
     qemu_mutex_lock(&vk_spec_lock);
-    vk_seed_collecting = false;
+    qatomic_set(&vk_seed_collecting, 0);
     unsigned completed = vk_seed_done, total = vk_seed_total;
     qemu_mutex_unlock(&vk_spec_lock);
     xemu_shader_precompile_update(XEMU_SHADER_BACKEND_VULKAN,
                                   completed, total,
                                   total == 0 || completed >= total,
-                                  total != 0);
+                                  true);
     if (queued || queued_states) {
         fprintf(stderr,
                 "nv2a: vk first-meet covers seeding (%u siblings + %u "

@@ -106,7 +106,8 @@ void DropPipelineCache()
 }
 } // namespace
 
-extern "C" void xemu_shader_precompile_reset(uint32_t title_id)
+extern "C" {
+void xemu_shader_precompile_reset(uint32_t title_id)
 {
     std::lock_guard<std::mutex> lock(g_mutex);
     g_precompile = {};
@@ -136,6 +137,7 @@ void xemu_shader_precompile_get(XemuShaderPrecompileStatus *status)
     if (!status) return;
     std::lock_guard<std::mutex> lock(g_mutex);
     *status = g_precompile;
+}
 }
 
 extern "C" void xemu_shader_cache_note(const char *path)

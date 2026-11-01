@@ -490,7 +490,8 @@ static void vk_seen_add(uint64_t h)
 
 #define VK_SPEC_QUEUED 1
 #define VK_SPEC_ADOPTED 2
-static struct { uint64_t hash; int phase; bool seed; } vk_spec_track[1024];
+static struct { uint64_t hash; int phase; bool seed; unsigned seed_generation; } vk_spec_track[1024];
+static unsigned vk_seed_generation;
 static unsigned vk_seed_total, vk_seed_done;
 static int vk_seed_collecting;
 static ShaderState vk_spec_pending[512];
@@ -575,7 +576,8 @@ static void *vk_spec_worker_fn(void *opaque)
         int t = vk_spec_find(h);
         if (t >= 0) {
             vk_spec_track[t].phase = VK_SPEC_ADOPTED;
-            if (vk_spec_track[t].seed) {
+            if (vk_spec_track[t].seed &&
+                vk_spec_track[t].seed_generation == vk_seed_generation) {
                 vk_seed_done++;
                 xemu_shader_precompile_update(XEMU_SHADER_BACKEND_VULKAN,
                                               vk_seed_done, vk_seed_total,
@@ -645,8 +647,11 @@ static bool vk_spec_queue(uint64_t h, const ShaderState *st, bool seed)
     qemu_mutex_lock(&vk_spec_lock);
     int existing = vk_spec_find(h);
     if (existing >= 0) {
-        if (seed && !vk_spec_track[existing].seed) {
+        if (seed && (!vk_spec_track[existing].seed ||
+                     vk_spec_track[existing].seed_generation !=
+                         vk_seed_generation)) {
             vk_spec_track[existing].seed = true;
+            vk_spec_track[existing].seed_generation = vk_seed_generation;
             vk_seed_total++;
             if (vk_spec_track[existing].phase == VK_SPEC_ADOPTED) {
                 vk_seed_done++;
@@ -669,6 +674,7 @@ static bool vk_spec_queue(uint64_t h, const ShaderState *st, bool seed)
             vk_spec_track[i].hash = h;
             vk_spec_track[i].phase = VK_SPEC_QUEUED;
             vk_spec_track[i].seed = seed;
+            vk_spec_track[i].seed_generation = seed ? vk_seed_generation : 0;
             if (seed) {
                 vk_seed_total++;
                 xemu_shader_precompile_update(XEMU_SHADER_BACKEND_VULKAN,
@@ -711,8 +717,23 @@ const ShaderState *pgraph_vk_seed_pump_states(unsigned *count)
  * .spv, so the first scene already finds them, as with the GL seed. */
 static void vk_seed_siblings(void)
 {
+    if (vk_spec_started) {
+        qemu_mutex_lock(&vk_spec_lock);
+        vk_seed_generation++;
+        vk_seed_total = 0;
+        vk_seed_done = 0;
+        qemu_mutex_unlock(&vk_spec_lock);
+    } else {
+        vk_seed_generation++;
+        vk_seed_total = 0;
+        vk_seed_done = 0;
+    }
+    if (vk_pump_states) {
+        g_array_set_size(vk_pump_states, 0);
+    }
     qatomic_set(&vk_seed_collecting, 1);
     if (!g_config.perf.shader_seeding) {
+        qatomic_set(&vk_seed_collecting, 0);
         xemu_shader_precompile_update(XEMU_SHADER_BACKEND_VULKAN, 0, 0,
                                       true, true);
         return;
@@ -734,6 +755,7 @@ static void vk_seed_siblings(void)
     ShaderState *local = pgraph_seed_read(PGRAPH_SEED_VK_STATES,
                                           sizeof(ShaderState), &n_local);
     if (!states && !local) {
+        qatomic_set(&vk_seed_collecting, 0);
         xemu_shader_precompile_update(XEMU_SHADER_BACKEND_VULKAN, 0, 0,
                                       true, true);
         return;
@@ -1037,11 +1059,13 @@ void pgraph_vk_init_shaders(PGRAPHState *pg)
  * the game's name, known at the latest a few seconds into SEGABOOT). */
 void pgraph_vk_seed_service(void)
 {
-    static bool done;
-    if (done || !pgraph_seed_game_tag()) {
+    static char *done_tag;
+    const char *tag = pgraph_seed_game_tag();
+    if (!tag || (done_tag && !strcmp(done_tag, tag))) {
         return;
     }
-    done = true;
+    g_free(done_tag);
+    done_tag = g_strdup(tag);
     vk_seed_siblings();
 }
 

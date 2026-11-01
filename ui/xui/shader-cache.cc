@@ -19,7 +19,6 @@
 #include <vector>
 
 #include "../xemu-settings.h"
-#include "../xemu-shader-cache.h"
 
 namespace fs = std::filesystem;
 
@@ -31,38 +30,6 @@ std::set<std::string> g_seen;        // noted for g_title this session
 std::vector<std::string> g_pending;  // not yet written
 std::atomic<bool> g_discard_pipelines{ false };
 XemuShaderPrecompileStatus g_precompile{};
-
-void xemu_shader_precompile_reset(uint32_t title_id)
-{
-    std::lock_guard<std::mutex> lock(g_mutex);
-    g_precompile = {};
-    g_precompile.title_id = title_id;
-}
-
-void xemu_shader_precompile_update(int backend, uint32_t done,
-                                   uint32_t total, bool finished,
-                                   bool available)
-{
-    std::lock_guard<std::mutex> lock(g_mutex);
-    if (backend == XEMU_SHADER_BACKEND_OPENGL) {
-        g_precompile.gl_started = available;
-        g_precompile.gl_done = done;
-        g_precompile.gl_total = total;
-        g_precompile.gl_finished = finished;
-    } else if (backend == XEMU_SHADER_BACKEND_VULKAN) {
-        g_precompile.vk_started = available;
-        g_precompile.vk_done = done;
-        g_precompile.vk_total = total;
-        g_precompile.vk_finished = finished;
-    }
-}
-
-void xemu_shader_precompile_get(XemuShaderPrecompileStatus *status)
-{
-    if (!status) return;
-    std::lock_guard<std::mutex> lock(g_mutex);
-    *status = g_precompile;
-}
 
 fs::path Base()
 {
@@ -138,6 +105,38 @@ void DropPipelineCache()
     fs::remove(Base() / "vk_pipeline_cache.bin", ec);
 }
 } // namespace
+
+extern "C" void xemu_shader_precompile_reset(uint32_t title_id)
+{
+    std::lock_guard<std::mutex> lock(g_mutex);
+    g_precompile = {};
+    g_precompile.title_id = title_id;
+}
+
+void xemu_shader_precompile_update(int backend, uint32_t done,
+                                   uint32_t total, bool finished,
+                                   bool available)
+{
+    std::lock_guard<std::mutex> lock(g_mutex);
+    if (backend == XEMU_SHADER_BACKEND_OPENGL) {
+        g_precompile.gl_started = available;
+        g_precompile.gl_done = done;
+        g_precompile.gl_total = total;
+        g_precompile.gl_finished = finished;
+    } else if (backend == XEMU_SHADER_BACKEND_VULKAN) {
+        g_precompile.vk_started = available;
+        g_precompile.vk_done = done;
+        g_precompile.vk_total = total;
+        g_precompile.vk_finished = finished;
+    }
+}
+
+void xemu_shader_precompile_get(XemuShaderPrecompileStatus *status)
+{
+    if (!status) return;
+    std::lock_guard<std::mutex> lock(g_mutex);
+    *status = g_precompile;
+}
 
 extern "C" void xemu_shader_cache_note(const char *path)
 {

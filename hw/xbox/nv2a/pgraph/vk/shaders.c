@@ -799,10 +799,16 @@ static void vk_seed_siblings(void)
     g_hash_table_destroy(seen);
     g_free(states);
     g_free(local);
-    qemu_mutex_lock(&vk_spec_lock);
-    qatomic_set(&vk_seed_collecting, 0);
-    unsigned completed = vk_seed_done, total = vk_seed_total;
-    qemu_mutex_unlock(&vk_spec_lock);
+    unsigned completed = 0, total = 0;
+    if (vk_spec_started) {
+        qemu_mutex_lock(&vk_spec_lock);
+        qatomic_set(&vk_seed_collecting, 0);
+        completed = vk_seed_done;
+        total = vk_seed_total;
+        qemu_mutex_unlock(&vk_spec_lock);
+    } else {
+        qatomic_set(&vk_seed_collecting, 0);
+    }
     xemu_shader_precompile_update(XEMU_SHADER_BACKEND_VULKAN,
                                   completed, total,
                                   total == 0 || completed >= total,

@@ -28,6 +28,7 @@
 #include "ui/xemu-settings.h"
 #include "hw/xbox/nv2a/pgraph/util.h"
 #include "hw/xbox/nv2a/pgraph/seed.h"
+#include "ui/xemu-shader-cache.h"
 #include "hw/xbox/nv2a/pgraph/glsl/uniform-cache.h"
 #include "debug.h"
 #include "renderer.h"
@@ -1739,6 +1740,8 @@ static void seed_load(PGRAPHGLState *r)
      * lag the boot. */
     if (!g_config.perf.cache_shaders || !g_config.perf.shader_seeding ||
         !gl_sso_enabled()) {
+        xemu_shader_precompile_update(XEMU_SHADER_BACKEND_OPENGL, 0, 0,
+                                      true, false);
         return;
     }
     r->seed.mod_keys = pgraph_seed_read(PGRAPH_SEED_GL_MODULES,
@@ -1812,11 +1815,17 @@ static void seed_load(PGRAPHGLState *r)
         r->seed.mod_n = n_keys;
         origin = "dynamic siblings";
     }
+    r->seed.total_pipelines = r->seed.pipe_n;
     if (r->seed.mod_n || r->seed.pipe_n) {
         r->seed.state = 1;
+        xemu_shader_precompile_update(XEMU_SHADER_BACKEND_OPENGL, 0,
+                                      r->seed.total_pipelines, false, true);
         fprintf(stderr,
                 "nv2a: shader seed loaded (%u module keys, %u states, %s)\n",
                 r->seed.mod_n, r->seed.pipe_n, origin);
+    } else {
+        xemu_shader_precompile_update(XEMU_SHADER_BACKEND_OPENGL, 0, 0,
+                                      true, false);
     }
 }
 
@@ -1827,6 +1836,9 @@ static void seed_finish(PGRAPHGLState *r, const char *why)
     g_free(r->seed.pipe_states);
     r->seed.pipe_states = NULL;
     r->seed.state = 0;
+    xemu_shader_precompile_update(XEMU_SHADER_BACKEND_OPENGL,
+                                  r->seed.total_pipelines,
+                                  r->seed.total_pipelines, true, true);
     fprintf(stderr, "nv2a: shader seed pump %s (%u pipelines built)\n",
             why, r->seed.pipes_built);
 }
@@ -2315,6 +2327,11 @@ void pgraph_gl_shaders_flip_service(NV2AState *d)
         left = slack_us - (g_get_monotonic_time() - t0);
         if (left > 300) {
             seed_pipe_pump(r, left);
+        }
+        if (r->seed.state == 1) {
+            xemu_shader_precompile_update(XEMU_SHADER_BACKEND_OPENGL,
+                                          r->seed.pipes_built,
+                                          r->seed.total_pipelines, false, true);
         }
     } else {
         /* No slack: a 1 us budget, in effect the harvest only. */

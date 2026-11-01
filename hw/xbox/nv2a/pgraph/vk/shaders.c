@@ -648,8 +648,13 @@ static bool vk_spec_queue(uint64_t h, const ShaderState *st, bool seed)
         if (seed && !vk_spec_track[existing].seed) {
             vk_spec_track[existing].seed = true;
             vk_seed_total++;
+            if (vk_spec_track[existing].phase == VK_SPEC_ADOPTED) {
+                vk_seed_done++;
+            }
             xemu_shader_precompile_update(XEMU_SHADER_BACKEND_VULKAN,
-                                          vk_seed_done, vk_seed_total, false,
+                                          vk_seed_done, vk_seed_total,
+                                          !vk_seed_collecting &&
+                                              vk_seed_done >= vk_seed_total,
                                           true);
         }
         qemu_mutex_unlock(&vk_spec_lock);
@@ -772,11 +777,14 @@ static void vk_seed_siblings(void)
     g_hash_table_destroy(seen);
     g_free(states);
     g_free(local);
+    qemu_mutex_lock(&vk_spec_lock);
     vk_seed_collecting = false;
+    unsigned completed = vk_seed_done, total = vk_seed_total;
+    qemu_mutex_unlock(&vk_spec_lock);
     xemu_shader_precompile_update(XEMU_SHADER_BACKEND_VULKAN,
-                                  vk_seed_done, vk_seed_total,
-                                  vk_seed_total == 0 || vk_seed_done >= vk_seed_total,
-                                  vk_seed_total != 0);
+                                  completed, total,
+                                  total == 0 || completed >= total,
+                                  total != 0);
     if (queued || queued_states) {
         fprintf(stderr,
                 "nv2a: vk first-meet covers seeding (%u siblings + %u "

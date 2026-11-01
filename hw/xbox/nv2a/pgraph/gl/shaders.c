@@ -1837,7 +1837,7 @@ static void seed_finish(PGRAPHGLState *r, const char *why)
     r->seed.pipe_states = NULL;
     r->seed.state = 0;
     xemu_shader_precompile_update(XEMU_SHADER_BACKEND_OPENGL,
-                                  r->seed.total_pipelines,
+                                  r->seed.pipes_built,
                                   r->seed.total_pipelines, true, true);
     fprintf(stderr, "nv2a: shader seed pump %s (%u pipelines built)\n",
             why, r->seed.pipes_built);

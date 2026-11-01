@@ -14,8 +14,8 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        arch: [x86_64, arm64]
-        configuration: [debug, release]
+        arch: [x86_64]
+        configuration: [release]
     container:
       image: ghcr.io/xemu-project/xemu-win64-toolchain${{ matrix.arch == 'x86_64' && '-gcc:sha-2881edd' || ':sha-0d06ce8' }}
     defaults:

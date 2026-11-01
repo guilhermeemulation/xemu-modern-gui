@@ -1211,6 +1211,7 @@ void pgraph_gl_finalize_shaders(PGRAPHState *pg)
      * prewarm lists. Links in flight stay for the next GL renderer. */
     glDeleteProgram(r->touch_prog);
     glDeleteVertexArrays(1, &r->touch_vao);
+    g_free(r->seed.tag);
     g_free(r->seed.mod_keys);
     g_free(r->seed.pipe_states);
     for (unsigned i = r->prewarm.idx; i < r->prewarm.count; i++) {
@@ -1930,6 +1931,21 @@ static void comb_async_service(PGRAPHGLState *r, int64_t budget_us)
     }
     int64_t svc_t0 = g_get_monotonic_time();
 
+    const char *game_tag = pgraph_seed_game_tag();
+    if (game_tag && (!r->seed.tag || strcmp(r->seed.tag, game_tag))) {
+        g_free(r->seed.mod_keys);
+        r->seed.mod_keys = NULL;
+        g_free(r->seed.pipe_states);
+        r->seed.pipe_states = NULL;
+        g_free(r->seed.tag);
+        r->seed.tag = g_strdup(game_tag);
+        r->seed.mod_n = r->seed.mod_idx = 0;
+        r->seed.pipe_n = 0;
+        r->seed.pipes_built = 0;
+        r->seed.total_pipelines = 0;
+        r->seed.stall_flips = 0;
+        r->seed.state = -1;
+    }
     if (r->seed.state == -1) {
         seed_load(r);
     }

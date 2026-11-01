@@ -1741,7 +1741,7 @@ static void seed_load(PGRAPHGLState *r)
     if (!g_config.perf.cache_shaders || !g_config.perf.shader_seeding ||
         !gl_sso_enabled()) {
         xemu_shader_precompile_update(XEMU_SHADER_BACKEND_OPENGL, 0, 0,
-                                      true, false);
+                                      true, true);
         return;
     }
     r->seed.mod_keys = pgraph_seed_read(PGRAPH_SEED_GL_MODULES,

@@ -721,6 +721,8 @@ static void vk_seed_siblings(void)
     }
     const char *tag = pgraph_seed_game_tag();
     if (!tag) {
+        xemu_shader_precompile_update(XEMU_SHADER_BACKEND_VULKAN, 0, 0,
+                                      true, false);
         return;
     }
     unsigned n = 0;

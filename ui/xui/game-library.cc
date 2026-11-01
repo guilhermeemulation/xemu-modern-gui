@@ -42,6 +42,7 @@
 #include "xbox-drive-explorer.hh"
 #include "perf-capture.hh"
 #include "shader-cache.hh"
+#include "../xemu-shader-cache.h"
 #include "dynamic-res.hh"
 #include "xbox-drive.hh"
 #include "game-patches.hh"
@@ -370,6 +371,11 @@ std::thread g_insignia_thread;
 std::string g_selected_path;
 std::string g_settings_path; // game whose settings popup is open
 int g_settings_shader_count = 0;  // its cached shader files, when opened
+bool g_shader_precompile_wait = false;
+bool g_shader_precompile_popup_opened = false;
+int g_shader_precompile_backend = CONFIG_DISPLAY_RENDERER_OPENGL;
+uint32_t g_shader_precompile_title = 0;
+std::string g_shader_precompile_name;
 bool g_settings_shader_confirm = false;
 std::string g_settings_shader_msg;
 GameOverrides g_settings_edit;
@@ -10741,6 +10747,15 @@ void LaunchNow(const std::string &path)
             return;
         }
     }
+    g_shader_precompile_title = e ? e->title_id : 0;
+    g_shader_precompile_name = name;
+    g_shader_precompile_backend = g_config.display.renderer;
+    g_shader_precompile_wait = g_config.perf.cache_shaders &&
+                               g_config.perf.shader_seeding;
+    g_shader_precompile_popup_opened = false;
+    if (g_shader_precompile_wait) {
+        xemu_shader_precompile_reset(g_shader_precompile_title);
+    }
     ActionLoadDiscFile(load_path.c_str());
     const char *loaded = g_config.sys.files.dvd_path;
     if (!loaded || load_path != loaded) {
@@ -10886,6 +10901,12 @@ void GameLibraryWindow::Update()
             g_dirty = true;
         }
         ApplyOverridesFor(cur);
+        if (g_shader_precompile_wait && g_loaded) {
+            LibraryEntry *loaded_game = CurrentGame();
+            if (loaded_game && loaded_game->title_id == g_shader_precompile_title) {
+                g_shader_precompile_backend = g_config.display.renderer;
+            }
+        }
         xemu_game_perf_disc_changed(cur.c_str());
     }
 
@@ -11995,6 +12016,50 @@ void DrawCollapsedTab()
 
 void GameLibraryWindow::Draw()
 {
+    if (g_shader_precompile_wait) {
+        if (!g_shader_precompile_popup_opened) {
+            ImGui::OpenPopup("##shader-precompile");
+            g_shader_precompile_popup_opened = true;
+        }
+        const float ps = g_viewport_mgr.m_scale;
+        ImGui::SetNextWindowSize(ImVec2(500 * ps, 0), ImGuiCond_Appearing);
+        if (ImGui::BeginPopupModal("##shader-precompile", nullptr,
+                                   ImGuiWindowFlags_AlwaysAutoResize |
+                                       ImGuiWindowFlags_NoMove)) {
+            XemuShaderPrecompileStatus status{};
+            xemu_shader_precompile_get(&status);
+            const bool vulkan = g_shader_precompile_backend ==
+                                CONFIG_DISPLAY_RENDERER_VULKAN;
+            const bool available = vulkan ? status.vk_started : status.gl_started;
+            const bool finished = vulkan ? status.vk_finished : status.gl_finished;
+            const unsigned done = vulkan ? status.vk_done : status.gl_done;
+            const unsigned total = vulkan ? status.vk_total : status.gl_total;
+            ImGui::TextWrapped("%s", g_shader_precompile_name.c_str());
+            ImGui::Separator();
+            ImGui::Text("%s", tr("Preparing known game shaders"));
+            ImGui::TextDisabled("%s", vulkan ? "Vulkan" : "OpenGL");
+            if (!available) {
+                ImGui::TextWrapped("%s", tr("Waiting for the game to boot and load its shader seed. If this game has no known shaders, you can continue now."));
+            } else if (total == 0) {
+                ImGui::TextWrapped("%s", tr("No known shader states were found for this game. New shaders will be learned while playing."));
+            } else {
+                const float fraction = total ? std::min(1.0f, (float)done / total) : 0.0f;
+                ImGui::ProgressBar(fraction, ImVec2(-1, 0));
+                ImGui::Text("%u / %u %s", done, total, tr("known shader states prepared"));
+                if (finished) {
+                    ImGui::TextWrapped("%s", tr("Known shader preparation is complete. Some shaders may still be discovered during gameplay."));
+                } else {
+                    ImGui::TextWrapped("%s", tr("Preparation runs in the background while the game boots."));
+                }
+            }
+            ImGui::Dummy(ImVec2(0, 4 * ps));
+            if (ImGui::Button(tr("Start game now"), ImVec2(-1, 34 * ps))) {
+                g_shader_precompile_wait = false;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+    }
     if (!is_open) {
         if (g_preview->IsOpen() && !PreviewStopping()) {
             RequestPreviewStop();

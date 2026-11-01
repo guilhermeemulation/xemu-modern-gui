@@ -1826,7 +1826,7 @@ static void seed_load(PGRAPHGLState *r)
                 r->seed.mod_n, r->seed.pipe_n, origin);
     } else {
         xemu_shader_precompile_update(XEMU_SHADER_BACKEND_OPENGL, 0, 0,
-                                      true, false);
+                                      true, true);
     }
 }
 
@@ -1925,10 +1925,8 @@ static void seed_pipe_pump(PGRAPHGLState *r, int64_t budget_us)
 static void comb_async_service(PGRAPHGLState *r, int64_t budget_us)
 {
     /* The service builds separable stage programs; without separate
-     * shader objects nothing can adopt them. */
-    if (!gl_sso_enabled()) {
-        return;
-    }
+     * shader objects nothing can adopt them. We still load the seed metadata
+     * below so the UI can report that this backend has no prewarm path. */
     int64_t svc_t0 = g_get_monotonic_time();
 
     const char *game_tag = pgraph_seed_game_tag();
@@ -1948,6 +1946,9 @@ static void comb_async_service(PGRAPHGLState *r, int64_t budget_us)
     }
     if (r->seed.state == -1) {
         seed_load(r);
+    }
+    if (!gl_sso_enabled()) {
+        return;
     }
 
     if (!gen_thr_up) {

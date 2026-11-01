@@ -740,6 +740,7 @@ static void vk_seed_siblings(void)
     }
     const char *tag = pgraph_seed_game_tag();
     if (!tag) {
+        qatomic_set(&vk_seed_collecting, 0);
         xemu_shader_precompile_update(XEMU_SHADER_BACKEND_VULKAN, 0, 0,
                                       true, true);
         return;

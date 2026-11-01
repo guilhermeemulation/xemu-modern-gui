@@ -2,10 +2,11 @@
 
 ## Goal
 
-Add a per-game shader preparation screen before gameplay. The screen must show real
+Add a per-game shader preparation screen over the guest boot. The screen must show real
 progress and must not claim that every possible shader has been compiled: only
 states present in the embedded seed dictionary and the game's learned seed can be
-prepared before the first run.
+prepared during startup. The guest must boot behind the screen because its game tag
+and shader seed are only known during SEGABOOT.
 
 ## Existing backend pieces
 
@@ -26,9 +27,9 @@ prepared before the first run.
 2. Expose the OpenGL and Vulkan seed/prewarm queues through that API. Count only
    work actually accepted by a queue; do not estimate totals from cache file
    counts.
-3. Add a modal XUI loading screen when the user chooses **Play after shader
-   preparation**. Show title, backend, completed/total, elapsed time, and
-   Cancel / Start now actions.
+3. Add a modal XUI loading screen when the user chooses **Play** with shader
+   caching and seeding enabled. The guest boots behind the modal; show title,
+   backend, completed/total and a **Start game now** bypass action.
 4. Keep compilation at low priority and bounded batches so the FX-8370E remains
    responsive. Cancellation must stop scheduling new work safely; an in-flight
    compiler call may finish.

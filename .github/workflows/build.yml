@@ -56,28 +56,9 @@ jobs:
         path: ${{ steps.package.outputs.pkg_filename }}
         compression-level: 0
 
-  linux:
-    name: Linux
-    needs: source
-    uses: ./.github/workflows/build-linux.yml
-    with:
-      pkg_version: ${{ needs.source.outputs.pkg_version }}
-
-  macos:
-    name: macOS
-    needs: source
-    uses: ./.github/workflows/build-macos.yml
-    with:
-      pkg_version: ${{ needs.source.outputs.pkg_version }}
-
   windows:
-    name: Windows
+    name: Windows x86_64 Release
     needs: source
     uses: ./.github/workflows/build-windows.yml
     with:
       pkg_version: ${{ needs.source.outputs.pkg_version }}
-
-  test:
-    name: Unit tests
-    needs: source
-    uses: ./.github/workflows/build-tests.yml

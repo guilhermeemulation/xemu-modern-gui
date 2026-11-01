@@ -10759,6 +10759,7 @@ void LaunchNow(const std::string &path)
     ActionLoadDiscFile(load_path.c_str());
     const char *loaded = g_config.sys.files.dvd_path;
     if (!loaded || load_path != loaded) {
+        g_shader_precompile_wait = false;
         return; // the load failed and xemu already showed why
     }
     if (load_path != path) {
@@ -12047,7 +12048,7 @@ void GameLibraryWindow::Draw()
                 ImGui::ProgressBar(fraction, ImVec2(-1, 0));
                 ImGui::Text("%u / %u %s", done, total, tr("known shader states prepared"));
                 if (finished) {
-                    ImGui::TextWrapped("%s", tr("Known shader preparation is complete. Some shaders may still be discovered during gameplay."));
+                    ImGui::TextWrapped("%s", tr("The preparation pass has finished. Additional shaders may still be discovered during gameplay."));
                 } else {
                     ImGui::TextWrapped("%s", tr("Preparation runs in the background while the game boots."));
                 }

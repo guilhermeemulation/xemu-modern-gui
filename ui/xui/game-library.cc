@@ -12046,7 +12046,7 @@ void GameLibraryWindow::Draw()
             } else {
                 const float fraction = total ? std::min(1.0f, (float)done / total) : 0.0f;
                 ImGui::ProgressBar(fraction, ImVec2(-1, 0));
-                ImGui::Text("%u / %u %s", done, total, tr("known shader states prepared"));
+                ImGui::Text("%u / %u %s", done, total, tr("seeded shader states processed"));
                 if (finished) {
                     ImGui::TextWrapped("%s", tr("The preparation pass has finished. Additional shaders may still be discovered during gameplay."));
                 } else {

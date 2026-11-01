@@ -65,7 +65,8 @@ static void thread_name(HANDLE h, char *out, size_t len)
 static const char *g_image_base;
 static uint32_t g_image_size;
 
-/* Does the code just before addr look like the end of a call instruction? */
+#if defined(_M_X64) || defined(__x86_64__)
+/* Does the code just before addr look like the end of an x86-64 call? */
 static bool after_call(const uint8_t *a)
 {
     return a[-5] == 0xE8 ||                      /* call rel32 */
@@ -77,17 +78,19 @@ static bool after_call(const uint8_t *a)
            (a[-6] == 0xFF && (a[-5] & 0xF8) == 0x90) ||     /* call [reg+disp32] */
            (a[-2] == 0xFF && (a[-1] & 0xF8) == 0x10);       /* call [reg] */
 }
+#endif
 
 /*
  * The nearest return address into xemu.exe among the top of the stack of a
  * suspended thread: which of our functions called into the driver, the C
  * library or the kernel. Nothing here may allocate or take a lock.
  */
-static uint32_t nearest_caller(uint64_t rsp)
+static uint32_t nearest_caller(uint64_t sp)
 {
+#if defined(_M_X64) || defined(__x86_64__)
     uint64_t buf[128];
     SIZE_T got = 0;
-    if (!ReadProcessMemory(GetCurrentProcess(), (const void *)(uintptr_t)rsp, buf,
+    if (!ReadProcessMemory(GetCurrentProcess(), (const void *)(uintptr_t)sp, buf,
                            sizeof(buf), &got) || got < 16) {
         return 0;
     }
@@ -99,6 +102,10 @@ static uint32_t nearest_caller(uint64_t rsp)
             return (uint32_t)(v - (uint64_t)(uintptr_t)g_image_base);
         }
     }
+#else
+    /* Return-address decoding below is specific to the x86-64 ABI. */
+    (void)sp;
+#endif
     return 0;
 }
 
@@ -355,10 +362,20 @@ static void *profiler_thread(void *opaque)
             CONTEXT ctx;
             ctx.ContextFlags = CONTEXT_CONTROL;
             if (GetThreadContext(pick[i].h, &ctx)) {
-                pick[i].rip[sweeps] = ctx.Rip;
-                if (ctx.Rip < (uint64_t)(uintptr_t)g_image_base ||
-                    ctx.Rip >= (uint64_t)(uintptr_t)g_image_base + g_image_size) {
-                    pick[i].caller[sweeps] = nearest_caller(ctx.Rsp);
+#if defined(_M_X64) || defined(__x86_64__)
+                const uint64_t ip = ctx.Rip;
+                const uint64_t sp = ctx.Rsp;
+#elif defined(_M_ARM64) || defined(__aarch64__)
+                const uint64_t ip = ctx.Pc;
+                const uint64_t sp = ctx.Sp;
+#else
+                const uint64_t ip = 0;
+                const uint64_t sp = 0;
+#endif
+                pick[i].rip[sweeps] = ip;
+                if (ip && (ip < (uint64_t)(uintptr_t)g_image_base ||
+                           ip >= (uint64_t)(uintptr_t)g_image_base + g_image_size)) {
+                    pick[i].caller[sweeps] = nearest_caller(sp);
                 }
             }
             ResumeThread(pick[i].h);
@@ -398,8 +415,16 @@ static LONG WINAPI crash_filter(EXCEPTION_POINTERS *ep)
     }
 
     const char *base = g_image_base;
+#if defined(_M_X64) || defined(__x86_64__)
     uint64_t rip = ep->ContextRecord->Rip;
     uint64_t rsp = ep->ContextRecord->Rsp;
+#elif defined(_M_ARM64) || defined(__aarch64__)
+    uint64_t rip = ep->ContextRecord->Pc;
+    uint64_t rsp = ep->ContextRecord->Sp;
+#else
+    uint64_t rip = 0;
+    uint64_t rsp = 0;
+#endif
     bool in_exe = rip >= (uint64_t)(uintptr_t)base &&
                   rip < (uint64_t)(uintptr_t)base + g_image_size;
 
@@ -417,6 +442,7 @@ static LONG WINAPI crash_filter(EXCEPTION_POINTERS *ep)
                 (unsigned long long)ep->ExceptionRecord->ExceptionInformation[1]);
     }
 
+#if defined(_M_X64) || defined(__x86_64__)
     uint64_t buf[256];
     SIZE_T got = 0;
     if (ReadProcessMemory(GetCurrentProcess(), (const void *)(uintptr_t)rsp,
@@ -433,6 +459,10 @@ static LONG WINAPI crash_filter(EXCEPTION_POINTERS *ep)
             }
         }
     }
+#else
+    /* Stack return-address decoding is not valid for Windows ARM64. */
+    (void)rsp;
+#endif
     fflush(stderr);
     return EXCEPTION_CONTINUE_SEARCH;
 }

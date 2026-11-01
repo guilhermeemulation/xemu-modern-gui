@@ -28,6 +28,7 @@
 #include "ui/xemu-settings.h"
 #include "hw/xbox/nv2a/pgraph/util.h"
 #include "hw/xbox/nv2a/pgraph/seed.h"
+#include "ui/xemu-shader-cache.h"
 #include "hw/xbox/nv2a/pgraph/glsl/uniform-cache.h"
 #include "debug.h"
 #include "renderer.h"
@@ -1210,6 +1211,7 @@ void pgraph_gl_finalize_shaders(PGRAPHState *pg)
      * prewarm lists. Links in flight stay for the next GL renderer. */
     glDeleteProgram(r->touch_prog);
     glDeleteVertexArrays(1, &r->touch_vao);
+    g_free(r->seed.tag);
     g_free(r->seed.mod_keys);
     g_free(r->seed.pipe_states);
     for (unsigned i = r->prewarm.idx; i < r->prewarm.count; i++) {
@@ -1739,6 +1741,8 @@ static void seed_load(PGRAPHGLState *r)
      * lag the boot. */
     if (!g_config.perf.cache_shaders || !g_config.perf.shader_seeding ||
         !gl_sso_enabled()) {
+        xemu_shader_precompile_update(XEMU_SHADER_BACKEND_OPENGL, 0, 0,
+                                      true, true);
         return;
     }
     r->seed.mod_keys = pgraph_seed_read(PGRAPH_SEED_GL_MODULES,
@@ -1812,11 +1816,17 @@ static void seed_load(PGRAPHGLState *r)
         r->seed.mod_n = n_keys;
         origin = "dynamic siblings";
     }
+    r->seed.total_pipelines = r->seed.pipe_n;
     if (r->seed.mod_n || r->seed.pipe_n) {
         r->seed.state = 1;
+        xemu_shader_precompile_update(XEMU_SHADER_BACKEND_OPENGL, 0,
+                                      r->seed.total_pipelines, false, true);
         fprintf(stderr,
                 "nv2a: shader seed loaded (%u module keys, %u states, %s)\n",
                 r->seed.mod_n, r->seed.pipe_n, origin);
+    } else {
+        xemu_shader_precompile_update(XEMU_SHADER_BACKEND_OPENGL, 0, 0,
+                                      true, true);
     }
 }
 
@@ -1827,6 +1837,9 @@ static void seed_finish(PGRAPHGLState *r, const char *why)
     g_free(r->seed.pipe_states);
     r->seed.pipe_states = NULL;
     r->seed.state = 0;
+    xemu_shader_precompile_update(XEMU_SHADER_BACKEND_OPENGL,
+                                  r->seed.pipes_built,
+                                  r->seed.total_pipelines, true, true);
     fprintf(stderr, "nv2a: shader seed pump %s (%u pipelines built)\n",
             why, r->seed.pipes_built);
 }
@@ -1912,14 +1925,30 @@ static void seed_pipe_pump(PGRAPHGLState *r, int64_t budget_us)
 static void comb_async_service(PGRAPHGLState *r, int64_t budget_us)
 {
     /* The service builds separable stage programs; without separate
-     * shader objects nothing can adopt them. */
-    if (!gl_sso_enabled()) {
-        return;
-    }
+     * shader objects nothing can adopt them. We still load the seed metadata
+     * below so the UI can report that this backend has no prewarm path. */
     int64_t svc_t0 = g_get_monotonic_time();
 
+    const char *game_tag = pgraph_seed_game_tag();
+    if (game_tag && (!r->seed.tag || strcmp(r->seed.tag, game_tag))) {
+        g_free(r->seed.mod_keys);
+        r->seed.mod_keys = NULL;
+        g_free(r->seed.pipe_states);
+        r->seed.pipe_states = NULL;
+        g_free(r->seed.tag);
+        r->seed.tag = g_strdup(game_tag);
+        r->seed.mod_n = r->seed.mod_idx = 0;
+        r->seed.pipe_n = 0;
+        r->seed.pipes_built = 0;
+        r->seed.total_pipelines = 0;
+        r->seed.stall_flips = 0;
+        r->seed.state = -1;
+    }
     if (r->seed.state == -1) {
         seed_load(r);
+    }
+    if (!gl_sso_enabled()) {
+        return;
     }
 
     if (!gen_thr_up) {
@@ -2315,6 +2344,11 @@ void pgraph_gl_shaders_flip_service(NV2AState *d)
         left = slack_us - (g_get_monotonic_time() - t0);
         if (left > 300) {
             seed_pipe_pump(r, left);
+        }
+        if (r->seed.state == 1) {
+            xemu_shader_precompile_update(XEMU_SHADER_BACKEND_OPENGL,
+                                          r->seed.pipes_built,
+                                          r->seed.total_pipelines, false, true);
         }
     } else {
         /* No slack: a 1 us budget, in effect the harvest only. */

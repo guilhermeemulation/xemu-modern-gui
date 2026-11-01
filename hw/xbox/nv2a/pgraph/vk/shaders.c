@@ -24,6 +24,7 @@
 #include "renderer.h"
 #include "ui/xemu-settings.h"
 #include "hw/xbox/nv2a/pgraph/seed.h"
+#include "ui/xemu-shader-cache.h"
 #include "hw/xbox/nv2a/pgraph/glsl/uniform-cache.h"
 
 const size_t MAX_UNIFORM_ATTR_VALUES_SIZE = NV2A_VERTEXSHADER_ATTRIBUTES * 4 * sizeof(float);
@@ -489,7 +490,10 @@ static void vk_seen_add(uint64_t h)
 
 #define VK_SPEC_QUEUED 1
 #define VK_SPEC_ADOPTED 2
-static struct { uint64_t hash; int phase; } vk_spec_track[1024];
+static struct { uint64_t hash; int phase; bool seed; unsigned seed_generation; } vk_spec_track[1024];
+static unsigned vk_seed_generation;
+static unsigned vk_seed_total, vk_seed_done;
+static int vk_seed_collecting;
 static ShaderState vk_spec_pending[512];
 static unsigned vk_spec_r, vk_spec_w;
 static QemuThread vk_spec_thread;
@@ -572,6 +576,14 @@ static void *vk_spec_worker_fn(void *opaque)
         int t = vk_spec_find(h);
         if (t >= 0) {
             vk_spec_track[t].phase = VK_SPEC_ADOPTED;
+            if (vk_spec_track[t].seed &&
+                vk_spec_track[t].seed_generation == vk_seed_generation) {
+                vk_seed_done++;
+                xemu_shader_precompile_update(XEMU_SHADER_BACKEND_VULKAN,
+                                              vk_seed_done, vk_seed_total,
+                                              !qatomic_read(&vk_seed_collecting) && vk_seed_done >= vk_seed_total,
+                                              true);
+            }
         }
         qemu_cond_broadcast(&vk_spec_cond);
     }
@@ -623,7 +635,7 @@ static void vk_spec_quiesce(void)
     qemu_mutex_unlock(&vk_spec_lock);
 }
 
-static void vk_spec_queue(uint64_t h, const ShaderState *st)
+static bool vk_spec_queue(uint64_t h, const ShaderState *st, bool seed)
 {
     if (!vk_spec_started) {
         vk_spec_started = true;
@@ -633,22 +645,51 @@ static void vk_spec_queue(uint64_t h, const ShaderState *st)
                            NULL, QEMU_THREAD_DETACHED);
     }
     qemu_mutex_lock(&vk_spec_lock);
-    if (vk_spec_find(h) >= 0 ||
-        vk_spec_w - vk_spec_r >= ARRAY_SIZE(vk_spec_pending)) {
+    int existing = vk_spec_find(h);
+    if (existing >= 0) {
+        if (seed && (!vk_spec_track[existing].seed ||
+                     vk_spec_track[existing].seed_generation !=
+                         vk_seed_generation)) {
+            vk_spec_track[existing].seed = true;
+            vk_spec_track[existing].seed_generation = vk_seed_generation;
+            vk_seed_total++;
+            if (vk_spec_track[existing].phase == VK_SPEC_ADOPTED) {
+                vk_seed_done++;
+            }
+            xemu_shader_precompile_update(XEMU_SHADER_BACKEND_VULKAN,
+                                          vk_seed_done, vk_seed_total,
+                                          !qatomic_read(&vk_seed_collecting) &&
+                                              vk_seed_done >= vk_seed_total,
+                                          true);
+        }
         qemu_mutex_unlock(&vk_spec_lock);
-        return;
+        return false;
+    }
+    if (vk_spec_w - vk_spec_r >= ARRAY_SIZE(vk_spec_pending)) {
+        qemu_mutex_unlock(&vk_spec_lock);
+        return false;
     }
     for (unsigned i = 0; i < ARRAY_SIZE(vk_spec_track); i++) {
         if (!vk_spec_track[i].phase) {
             vk_spec_track[i].hash = h;
             vk_spec_track[i].phase = VK_SPEC_QUEUED;
+            vk_spec_track[i].seed = seed;
+            vk_spec_track[i].seed_generation = seed ? vk_seed_generation : 0;
+            if (seed) {
+                vk_seed_total++;
+                xemu_shader_precompile_update(XEMU_SHADER_BACKEND_VULKAN,
+                                              vk_seed_done, vk_seed_total,
+                                              false, true);
+            }
             vk_spec_pending[vk_spec_w % ARRAY_SIZE(vk_spec_pending)] = *st;
             vk_spec_w++;
             qemu_cond_broadcast(&vk_spec_cond);
-            break;
+            qemu_mutex_unlock(&vk_spec_lock);
+            return true;
         }
     }
     qemu_mutex_unlock(&vk_spec_lock);
+    return false;
 }
 
 static GArray *vk_pump_states; /* covers then states, for the library pump */
@@ -676,11 +717,32 @@ const ShaderState *pgraph_vk_seed_pump_states(unsigned *count)
  * .spv, so the first scene already finds them, as with the GL seed. */
 static void vk_seed_siblings(void)
 {
+    if (vk_spec_started) {
+        qemu_mutex_lock(&vk_spec_lock);
+        vk_seed_generation++;
+        vk_seed_total = 0;
+        vk_seed_done = 0;
+        qemu_mutex_unlock(&vk_spec_lock);
+    } else {
+        vk_seed_generation++;
+        vk_seed_total = 0;
+        vk_seed_done = 0;
+    }
+    if (vk_pump_states) {
+        g_array_set_size(vk_pump_states, 0);
+    }
+    qatomic_set(&vk_seed_collecting, 1);
     if (!g_config.perf.shader_seeding) {
+        qatomic_set(&vk_seed_collecting, 0);
+        xemu_shader_precompile_update(XEMU_SHADER_BACKEND_VULKAN, 0, 0,
+                                      true, true);
         return;
     }
     const char *tag = pgraph_seed_game_tag();
     if (!tag) {
+        qatomic_set(&vk_seed_collecting, 0);
+        xemu_shader_precompile_update(XEMU_SHADER_BACKEND_VULKAN, 0, 0,
+                                      true, true);
         return;
     }
     unsigned n = 0;
@@ -694,6 +756,9 @@ static void vk_seed_siblings(void)
     ShaderState *local = pgraph_seed_read(PGRAPH_SEED_VK_STATES,
                                           sizeof(ShaderState), &n_local);
     if (!states && !local) {
+        qatomic_set(&vk_seed_collecting, 0);
+        xemu_shader_precompile_update(XEMU_SHADER_BACKEND_VULKAN, 0, 0,
+                                      true, true);
         return;
     }
     /* One queue slot per distinct cover. */
@@ -711,7 +776,7 @@ static void vk_seed_siblings(void)
             if (!pgraph_seed_hash_set_add(seen, h)) {
                 continue;
             }
-            vk_spec_queue(h, &fb);
+            vk_spec_queue(h, &fb, true);
             vk_pump_remember(&fb);
             queued++;
         }
@@ -727,7 +792,7 @@ static void vk_seed_siblings(void)
             if (!pgraph_seed_hash_set_add(seen, h)) {
                 continue;
             }
-            vk_spec_queue(h, &arr[i]);
+            vk_spec_queue(h, &arr[i], true);
             vk_pump_remember(&arr[i]);
             queued_states++;
         }
@@ -735,6 +800,20 @@ static void vk_seed_siblings(void)
     g_hash_table_destroy(seen);
     g_free(states);
     g_free(local);
+    unsigned completed = 0, total = 0;
+    if (vk_spec_started) {
+        qemu_mutex_lock(&vk_spec_lock);
+        qatomic_set(&vk_seed_collecting, 0);
+        completed = vk_seed_done;
+        total = vk_seed_total;
+        qemu_mutex_unlock(&vk_spec_lock);
+    } else {
+        qatomic_set(&vk_seed_collecting, 0);
+    }
+    xemu_shader_precompile_update(XEMU_SHADER_BACKEND_VULKAN,
+                                  completed, total,
+                                  total == 0 || completed >= total,
+                                  true);
     if (queued || queued_states) {
         fprintf(stderr,
                 "nv2a: vk first-meet covers seeding (%u siblings + %u "
@@ -937,7 +1016,7 @@ void pgraph_vk_bind_shaders(PGRAPHState *pg)
                                 vk_spec_release_adopted(fh);
                             }
                             if (!phase) {
-                                vk_spec_queue(h, &new_state);
+                                vk_spec_queue(h, &new_state, false);
                             }
                             nv2a_profile_inc_counter(
                                 NV2A_PROF_SHADER_FALLBACK);
@@ -946,7 +1025,7 @@ void pgraph_vk_bind_shaders(PGRAPHState *pg)
                             /* The sibling, interpreter code, compiles
                              * slower than the state: queue it; the
                              * normal path serves until it lands. */
-                            vk_spec_queue(fh, &fb);
+                            vk_spec_queue(fh, &fb, false);
                         }
                     }
                 }
@@ -987,11 +1066,13 @@ void pgraph_vk_init_shaders(PGRAPHState *pg)
  * the game's name, known at the latest a few seconds into SEGABOOT). */
 void pgraph_vk_seed_service(void)
 {
-    static bool done;
-    if (done || !pgraph_seed_game_tag()) {
+    static char *done_tag;
+    const char *tag = pgraph_seed_game_tag();
+    if (!tag || (done_tag && !strcmp(done_tag, tag))) {
         return;
     }
-    done = true;
+    g_free(done_tag);
+    done_tag = g_strdup(tag);
     vk_seed_siblings();
 }
 

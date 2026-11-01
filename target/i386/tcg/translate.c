@@ -42,6 +42,13 @@ static int g_use_hard_fpu;
 #include "qemu/cpu-boost.h"
 #include "exec/tb-flush.h"
 #include "hw/core/cpu.h"
+#else
+/* CPU boost and per-title x87 controls are Xbox host-only features. */
+static int xemu_cpu_boost;
+static int xemu_x87_exact;
+#endif
+
+#if defined(XBOX) && defined(__x86_64__)
 #define MAP_GEN_HELPER_SOFT_HARD(name) \
     (g_use_hard_fpu ? gen_helper_##name##__hard : gen_helper_##name##__soft)
 #define gen_helper_flds_FT0       MAP_GEN_HELPER_SOFT_HARD(flds_FT0)
@@ -4369,7 +4376,6 @@ void tcg_x86_init(void)
 
 #if defined(XBOX) && defined(__x86_64__)
     g_use_hard_fpu = g_config.perf.hard_fpu;
-#endif
     xemu_cpu_boost = g_config.perf.native_sse;
     {
         /*
@@ -4389,18 +4395,20 @@ void tcg_x86_init(void)
         } else {
             xemu_x87_exact = xemu_x87_title_exact;
         }
-        fprintf(stderr, "x87: %s (%s)\n", xemu_x87_exact
+        fprintf(stderr, "x87: %s (%s)\\n", xemu_x87_exact
                 ? "exact loads, single-precision results rounded after each operation"
                 : "fast (register width follows the precision control)", why);
     }
+#endif
 }
 
+#if defined(XBOX) && defined(__x86_64__)
 static void xemu_x87_switch_work(CPUState *cpu, run_on_cpu_data data)
 {
     /* Every vCPU is stopped here; blocks built the other way are dropped */
     xemu_x87_exact = data.host_int;
     tb_flush__exclusive_or_serial();
-    fprintf(stderr, "x87: switched to %s for this game\n",
+    fprintf(stderr, "x87: switched to %s for this game\\n",
             xemu_x87_exact ? "exact loads" : "the fast path");
 }
 
@@ -4414,6 +4422,7 @@ void xemu_x87_set_mode(int exact)
     async_safe_run_on_cpu(first_cpu, xemu_x87_switch_work,
                           RUN_ON_CPU_HOST_INT(exact));
 }
+#endif
 
 static void i386_tr_init_disas_context(DisasContextBase *dcbase, CPUState *cpu)
 {

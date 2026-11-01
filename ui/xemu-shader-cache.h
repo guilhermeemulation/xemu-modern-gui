@@ -20,6 +20,26 @@
 extern "C" {
 #endif
 
+enum {
+    XEMU_SHADER_BACKEND_OPENGL = 1,
+    XEMU_SHADER_BACKEND_VULKAN = 2,
+};
+
+typedef struct XemuShaderPrecompileStatus {
+    uint32_t title_id;
+    uint32_t gl_done, gl_total;
+    uint32_t vk_done, vk_total;
+    bool gl_started, gl_finished;
+    bool vk_started, vk_finished;
+} XemuShaderPrecompileStatus;
+
+/* Progress counts only work discovered in the game's known shader seeds. */
+void xemu_shader_precompile_reset(uint32_t title_id);
+void xemu_shader_precompile_update(int backend, uint32_t done,
+                                   uint32_t total, bool finished,
+                                   bool available);
+void xemu_shader_precompile_get(XemuShaderPrecompileStatus *status);
+
 /* A shader cache file was written or read for the running game (any
  * thread) */
 void xemu_shader_cache_note(const char *path);

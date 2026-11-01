@@ -413,6 +413,7 @@ typedef struct PGRAPHGLState {
     unsigned spec_pending_r, spec_pending_w;
     /* Cold-boot seed pump (the seed block above struct SeedCollect). */
     struct {
+        char *tag;
         ShaderModuleCacheKey *mod_keys;
         unsigned mod_n, mod_idx;
         ShaderState *pipe_states;

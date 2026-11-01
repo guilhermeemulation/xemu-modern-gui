@@ -419,6 +419,7 @@ typedef struct PGRAPHGLState {
         unsigned pipe_n;
         int state; /* -1 unloaded, 1 pumping, 0 done/absent */
         unsigned stall_flips, pipes_built;
+        unsigned total_pipelines;
     } seed;
     /* Boot prewarm of the on-disk module cache. */
     struct {

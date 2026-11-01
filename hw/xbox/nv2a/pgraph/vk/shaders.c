@@ -720,7 +720,7 @@ static void vk_seed_siblings(void)
     const char *tag = pgraph_seed_game_tag();
     if (!tag) {
         xemu_shader_precompile_update(XEMU_SHADER_BACKEND_VULKAN, 0, 0,
-                                      true, false);
+                                      true, true);
         return;
     }
     unsigned n = 0;
@@ -735,7 +735,7 @@ static void vk_seed_siblings(void)
                                           sizeof(ShaderState), &n_local);
     if (!states && !local) {
         xemu_shader_precompile_update(XEMU_SHADER_BACKEND_VULKAN, 0, 0,
-                                      true, false);
+                                      true, true);
         return;
     }
     /* One queue slot per distinct cover. */
